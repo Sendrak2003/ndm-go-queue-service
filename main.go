@@ -133,6 +133,10 @@ func main() {
 	}
 
 	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/" {
+			w.WriteHeader(http.StatusBadRequest)
+			return
+		}
 		switch r.Method {
 		case http.MethodPut:
 			putHandler(w, r)
