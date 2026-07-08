@@ -2,9 +2,9 @@ Simple in-memory queue broker with FIFO and timeout support.
 
 Tech:
 - Go (std lib only)
-- HTTP APSSSI
+- HTTP API
 
 Features:
-- Multiple queuesS
+- Multiple queues
 - FIFO delivery
-- Blocking pop with timeoutSS
+- Blocking pop with timeout
