@@ -1,16 +1,13 @@
 package main
 
 import (
+	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"sync"
 	"time"
 )
-
-///////////////////////////////////////////
-// модель / сервисный слой
-///////////////////////////////////////////
 
 type waiter struct {
 	ch chan string
@@ -35,8 +32,6 @@ func (q *Queue) Push(msg string) {
 	q.items = append(q.items, msg)
 }
 
-// Pop забирает первое сообщение из очереди (FIFO).
-// Возвращает false, если очередь пуста.
 func (q *Queue) Pop() (string, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
@@ -50,13 +45,14 @@ func (q *Queue) Pop() (string, bool) {
 }
 
 func (q *Queue) PopWait(timeout time.Duration) (string, bool) {
-	if msg, ok := q.Pop(); ok {
+	q.mu.Lock()
+	if len(q.items) > 0 {
+		msg := q.items[0]
+		q.items = q.items[1:]
+		q.mu.Unlock()
 		return msg, true
 	}
-
 	ch := make(chan string, 1)
-
-	q.mu.Lock()
 	q.waiters = append(q.waiters, waiter{ch: ch})
 	q.mu.Unlock()
 
@@ -68,17 +64,15 @@ func (q *Queue) PopWait(timeout time.Duration) (string, bool) {
 		for i, w := range q.waiters {
 			if w.ch == ch {
 				q.waiters = append(q.waiters[:i], q.waiters[i+1:]...)
-				break
+				q.mu.Unlock()
+				return "", false
 			}
 		}
 		q.mu.Unlock()
-		return "", false
+		// waiter уже был удалён Push()-ем: сообщение точно доставлено в ch
+		return <-ch, true
 	}
 }
-
-///////////////////////////////////////////
-// хранилище очередей
-///////////////////////////////////////////
 
 var (
 	queuesMu sync.Mutex
@@ -96,10 +90,6 @@ func getQueue(name string) *Queue {
 	}
 	return q
 }
-
-///////////////////////////////////////////
-// HTTP-слой
-///////////////////////////////////////////
 
 func putHandler(w http.ResponseWriter, r *http.Request) {
 	val := r.URL.Query().Get("v")
@@ -124,7 +114,11 @@ func getHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	t, _ := strconv.Atoi(timeoutStr)
+	t, err := strconv.Atoi(timeoutStr)
+	if err != nil || t < 0 {
+		w.WriteHeader(http.StatusBadRequest)
+		return
+	}
 	if msg, ok := q.PopWait(time.Duration(t) * time.Second); ok {
 		w.Write([]byte(msg))
 		return
@@ -144,8 +138,12 @@ func main() {
 			putHandler(w, r)
 		case http.MethodGet:
 			getHandler(w, r)
+		default:
+			w.WriteHeader(http.StatusMethodNotAllowed)
 		}
 	})
 
-	http.ListenAndServe(":"+port, nil)
+	if err := http.ListenAndServe(":"+port, nil); err != nil {
+		log.Fatal(err)
+	}
 }
